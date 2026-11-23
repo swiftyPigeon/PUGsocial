@@ -1733,9 +1733,54 @@ local function MinimapButton()
 end
 
 -- A button by the chat, while the window is closed: the logo in a rounded square, just above the
--- game's social button (whichever this client has), with the unread mentions on its corner as
--- the social button has its count. Only placed against the game's button, never hooking it.
+-- game's social button (whichever this client has), with the unread mentions in a bubble on its
+-- top right corner. Only placed against the game's button, never hooking it.
 local chatButton
+
+-- The bubble: a red disc in a bronze rim, the count in white on it (the game's look: two of the
+-- portrait mask's discs, as the map pins draw theirs). Over the logo, hidden while nothing waits.
+UI.BADGE_SIZE = 16
+UI.BADGE_RIM = { 0.72, 0.52, 0.26 }   -- bronze
+UI.BADGE_DARK = { 0.24, 0.14, 0.05 }  -- the rim's dark outer line
+UI.BADGE_RED = { 0.78, 0.09, 0.07 }
+local DISC = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
+local function Badge(parent)
+	local f = CreateFrame("Frame", nil, parent)
+	f:SetSize(UI.BADGE_SIZE, UI.BADGE_SIZE)
+	f:SetPoint("CENTER", parent, "TOPRIGHT", -3, -3)
+	f:SetFrameLevel(parent:GetFrameLevel() + 5)
+	local function Disc(layer, sub, inset, rgb)
+		local t = f:CreateTexture(nil, layer, nil, sub)
+		t:SetTexture(DISC)
+		t:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+		t:SetPoint("TOPLEFT", inset, -inset)
+		t:SetPoint("BOTTOMRIGHT", -inset, inset)
+		return t
+	end
+	f.outline = Disc("ARTWORK", 0, 0, UI.BADGE_DARK)
+	f.rim = Disc("ARTWORK", 1, 1, UI.BADGE_RIM)
+	f.fill = Disc("ARTWORK", 2, 3, UI.BADGE_RED)
+	-- A soft shine on the red's top, as the game's round buttons have.
+	f.shine = Disc("ARTWORK", 3, 5, { 1, 0.55, 0.5 })
+	f.shine:SetAlpha(0.35)
+	f.shine:ClearAllPoints()
+	f.shine:SetPoint("TOP", f, "TOP", 0, -4)
+	f.shine:SetSize(UI.BADGE_SIZE - 9, (UI.BADGE_SIZE - 9) / 2)
+	f.text = f:CreateFontString(nil, "OVERLAY")
+	f.text:SetFontObject(FontObject("badge"))
+	f.text:SetTextColor(1, 1, 1)
+	f.text:SetShadowOffset(1, -1)
+	f.text:SetPoint("CENTER", f, "CENTER", 0.5, 0)
+	f:Hide()
+	return f
+end
+function UI.SetBadge(b, n)
+	if not (b and b.badge) then return end
+	n = tonumber(n) or 0
+	if n <= 0 then return b.badge:Hide() end
+	b.badge.text:SetText(n > 9 and "9+" or tostring(n))
+	b.badge:Show()
+end
 local function ChatButton()
 	local b = CreateFrame("Button", "Pugger_ChatButton", UIParent)
 	b:SetSize(32, 32)
@@ -1748,9 +1793,7 @@ local function ChatButton()
 	b.shine:SetTexture(ns.ICON_SQUIRCLE)
 	b.shine:SetBlendMode("ADD")
 	b.shine:SetAlpha(0.35)
-	b.count = Font(b, "big")
-	b.count:SetPoint("BOTTOMRIGHT", 3, -1)
-	b.count:SetShadowOffset(1, -1)
+	b.badge = Badge(b)
 	local social
 	for _, name in ipairs({ "QuickJoinToastButton", "FriendsMicroButton", "ChatFrameChannelButton", "ChatFrameMenuButton" }) do
 		local f = _G[name]
@@ -1785,7 +1828,7 @@ function UI.UpdateChatButton()
 	end
 	chatButton = chatButton or ChatButton()
 	local n = ns.rdb and ns.rdb.unreadMentions or 0
-	chatButton.count:SetText(n > 0 and tostring(n) or "")
+	UI.SetBadge(chatButton, n)
 	-- (Greyed while cards are off or paused: the count still counts.)
 	if chatButton.icon.SetDesaturated then chatButton.icon:SetDesaturated(ns.Popups and ns.Popups.Paused() or false) end
 	if frame:IsShown() then chatButton:Hide() else chatButton:Show() end
