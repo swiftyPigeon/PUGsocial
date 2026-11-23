@@ -116,9 +116,63 @@ end
 -- client splits names so.
 ---------------------------------------------------------------------------
 
-function ns.CurrentRealm()
+-- The realm the game reports, in the form the server uses in "Name-Realm" (no spaces or
+-- dashes), or "" when it reports none.
+function ns.GameRealm()
 	local realm = GetNormalizedRealmName and GetNormalizedRealmName()
-	if not realm or realm == "" then realm = ((GetRealmName and GetRealmName()) or ""):gsub("[%s%-]", "") end
+	if not realm or realm == "" then realm = (((GetRealmName and GetRealmName()) or ""):gsub("[%s%-]", "")) end
+	return type(realm) == "string" and realm or ""
+end
+
+-- The realm this character had, for a client that reports none (WoW: Forever 1.60.1 can:
+-- GetRealmName "", GetRealmID 0). db.realmOf[character, lowercased, no realm] = realm, saved at
+-- each login the game said it (ns.RememberRealm); before that was ever saved, this character's
+-- entry in db.chars ("Name-Realm", the realm as the server wrote it). nil when neither knows.
+local function CharacterKeys()
+	local keys = {}
+	local name, second = nil, nil
+	if UnitFullName then name, second = UnitFullName("player") end
+	if type(name) ~= "string" or name == "" then name = UnitName and UnitName("player") end
+	if type(name) ~= "string" or name == "" then return keys end
+	if type(second) == "string" and second ~= "" then keys[#keys + 1] = (name .. " " .. second):lower() end
+	keys[#keys + 1] = name:lower()
+	return keys
+end
+
+function ns.RememberedRealm()
+	local db = ns.db
+	if type(db) ~= "table" then return nil end
+	local keys = CharacterKeys()
+	if type(db.realmOf) == "table" then
+		for _, k in ipairs(keys) do
+			local r = db.realmOf[k]
+			if type(r) == "string" and r ~= "" then return r end
+		end
+	end
+	if type(db.chars) == "table" then
+		for _, k in ipairs(keys) do
+			for entry in pairs(db.chars) do
+				local n, r = tostring(entry):match("^(.-)%-([^%-]+)$")
+				if n and n:lower() == k and r ~= "?" then return r end
+			end
+		end
+	end
+	return nil
+end
+
+-- At login: the realm the game reports, kept for this character (nothing when it reports none).
+function ns.RememberRealm(me)
+	local realm = ns.GameRealm()
+	if realm == "" or type(ns.db) ~= "table" or type(me) ~= "string" then return end
+	ns.db.realmOf = type(ns.db.realmOf) == "table" and ns.db.realmOf or {}
+	ns.db.realmOf[(me:gsub("%-[^%-]*$", "")):lower()] = realm
+end
+
+-- This realm's key: the one the game reports, else the one this character had (ns.RememberedRealm),
+-- so its identity ("Name-Realm"), its key and its feed stay the same. "?" only when nothing is known.
+function ns.CurrentRealm()
+	local realm = ns.GameRealm()
+	if realm == "" and ns.RememberedRealm then realm = ns.RememberedRealm() or "" end
 	return realm ~= "" and realm or "?"
 end
 
@@ -285,6 +339,7 @@ end
 -- Saved data. PuggerDB = {
 --   settings = {...} (DEFAULTS), log = {}, errors = {},
 --   chars = { [Name-Realm] = { window = {...}, seed = <secret key, base64>, pk = ... } },
+--   realmOf = { [character, lowercased, no realm] = realm } (ns.RememberedRealm),
 --   feeds = { [Ruleset-Faction] = the feed this character's ruleset and faction share (Store.lua);
 --             Realm-Faction where the realm's name gives no ruleset },
 -- }
@@ -401,6 +456,9 @@ ns.RegisterEvent("PLAYER_LOGIN", function()
 	ns.ruleset = ns.Ruleset(ns.realm)
 	ns.faction = ns.Faction()
 	ns.me = ns.PlayerName()
+	-- The realm kept while the game says it, and said when it was not (ns.CurrentRealm).
+	ns.RememberRealm(ns.me)
+	if ns.GameRealm() == "" then ns.Log("the game reports no realm: using %s", tostring(ns.realm)) end
 	ns.db.chars[ns.me] = ns.db.chars[ns.me] or {}
 	ns.cdb = ns.db.chars[ns.me]
 	OpenFeed()
