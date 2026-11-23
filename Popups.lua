@@ -141,6 +141,58 @@ function Popups.Card(spec)
 end
 
 ---------------------------------------------------------------------------
+-- What waits unseen (the chat button's bubble, with the unread mentions)
+---------------------------------------------------------------------------
+-- Calls and asks that came while the window was closed: whether their cards showed or not (cards
+-- off, paused, or in a group instance). Each holds the tab that lists it and a check: still live?
+-- An ended or expired call, or an ask answered, drops out by itself. Opening the window sees them.
+-- (Session only: a call lives minutes; the unread mentions are the saved part.)
+Popups.unseen = {} -- [key] = { tab, t, live = function }
+
+local function Refresh()
+	local UI = ns.UI
+	if UI and UI.UpdateChatButton then UI.UpdateChatButton() end
+end
+
+function Popups.Note(key, tab, live)
+	local UI = ns.UI
+	local f = UI and UI.Frame and UI.Frame()
+	if f and f:IsShown() then return end
+	Popups.unseen[key] = { tab = tab, t = GetTime(), live = live }
+	Refresh()
+end
+
+-- How many still wait, and the tab of the newest.
+function Popups.Unseen()
+	local n, newest = 0, nil
+	for key, u in pairs(Popups.unseen) do
+		local ok, live = pcall(u.live)
+		if ok and live then
+			n = n + 1
+			if not newest or u.t > newest.t then newest = u end
+		else
+			Popups.unseen[key] = nil
+		end
+	end
+	return n, newest and newest.tab or nil
+end
+
+function Popups.Seen()
+	if next(Popups.unseen) == nil then return end
+	wipe(Popups.unseen)
+	Refresh()
+end
+
+-- The tab that lists a call (UI's Groups: dungeon calls; Nearby: rare and group calls).
+local function CallTab(c) return c.kind == "D" and "groups" or "nearby" end
+local function CallLive(id)
+	return function()
+		local c = ns.Calls.Get(id)
+		return c ~= nil and ns.Calls.Shown(c)
+	end
+end
+
+---------------------------------------------------------------------------
 -- The cards
 ---------------------------------------------------------------------------
 
@@ -173,6 +225,7 @@ function Popups.Call(c)
 	else
 		return -- (a camp makes no card)
 	end
+	Popups.Note("c" .. c.id, CallTab(c), CallLive(c.id))
 	local buttons = {}
 	for _, a in ipairs(UI.CallActions(c)) do
 		if #buttons < 3 then buttons[#buttons + 1] = { label = a.label, go = a.go, kind = a.kind, disabled = a.disabled } end
@@ -186,6 +239,11 @@ end
 
 function Popups.Ask(c, ask)
 	if ns.Quiet() then held[c.id] = true return end
+	local callLive = CallLive(c.id)
+	Popups.Note("a" .. c.id .. "~" .. tostring(ask.name), CallTab(c), function()
+		local a = callLive() and c.asks and c.asks[ask.name]
+		return a ~= nil and a ~= false and a.state == "waiting"
+	end)
 	local UI = UIx()
 	local class = (LOCALIZED_CLASS_NAMES_MALE or {})[ask.class] or ask.class
 	local where = ask.yards and L.YARDS_AWAY:format(ask.yards) or (ask.zone ~= "" and L.IN_ZONE:format(ask.zone) or "")

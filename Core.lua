@@ -32,6 +32,7 @@ local DEFAULTS = {
 	cardsOff = false,       -- no cards at all (asks on the player's own calls still come)
 	pauseUntil = 0,         -- ...or none until this time (the menu's "pause for an hour")
 	cardSound = true,       -- a card plays the whisper sound
+	bubble = "all",         -- what the chat button's bubble counts: "all", "mentions" or "calls" (calls and asks)
 	showRares = true, showCamps = true, showGroups = true, -- on the world map and minimap
 	groupsInRealm = true,   -- dungeon calls as a small line in the Realm timeline
 	asks = "all",           -- who may ask to join this player's calls: all | friends | off

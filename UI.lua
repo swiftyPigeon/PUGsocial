@@ -1310,7 +1310,11 @@ function UI.Build()
 	frame:SetScript("OnUpdate", function()
 		if dirty and GetTime() - lastDraw >= UI.REDRAW then UI.Render() end
 	end)
-	frame:SetScript("OnShow", function() dirty = true quietHidden = nil ns.cdb.window.shown = true UI.UpdateChatButton() end)
+	frame:SetScript("OnShow", function()
+		dirty = true quietHidden = nil ns.cdb.window.shown = true
+		if ns.Popups and ns.Popups.Seen then ns.Popups.Seen() end -- (the calls and asks waiting: seen now)
+		UI.UpdateChatButton()
+	end)
 	frame:SetScript("OnHide", function()
 		if not combatHidden and not quietHidden then ns.cdb.window.shown = false end
 		UI.UpdateChatButton()
@@ -1623,6 +1627,11 @@ function UI.NotifyMenu(anchor)
 		{ text = L.MAP_LEVEL_ONLY, check = s.groupLevelOnly, disabled = off, go = Flip("groupLevelOnly") },
 		{ text = L.CARD_SOUND, check = s.cardSound, disabled = off, go = Flip("cardSound") },
 		{ text = L.NOTIFY_ASKS_NOTE, disabled = true },
+		-- What the button's bubble counts (its own pick: cards off or paused, it still counts).
+		{ text = L.BUBBLE_TITLE, title = true },
+		{ text = L.BUBBLE_ALL, check = (s.bubble or "all") == "all", go = function() s.bubble = "all" Notified() UI.NotifyMenu(anchor) end },
+		{ text = L.BUBBLE_MENTIONS, check = s.bubble == "mentions", go = function() s.bubble = "mentions" Notified() UI.NotifyMenu(anchor) end },
+		{ text = L.BUBBLE_CALLS, check = s.bubble == "calls", go = function() s.bubble = "calls" Notified() UI.NotifyMenu(anchor) end },
 	})
 end
 
@@ -1732,9 +1741,22 @@ local function MinimapButton()
 	return b
 end
 
+-- What waits for the player: the unread mentions (saved), and the calls and asks that came while
+-- the window was closed and still live (Popups.Unseen), with the tab of the newest of those.
+-- What the bubble counts is the player's pick (settings.bubble): everything, mentions only, or
+-- calls and asks only; what it leaves out counts as 0 here (the tooltip and the click follow it).
+UI.BUBBLE = { "all", "mentions", "calls" }
+function UI.Waiting()
+	local pick = ns.db and ns.db.settings and ns.db.settings.bubble or "all"
+	local mentions = pick ~= "calls" and (ns.rdb and ns.rdb.unreadMentions or 0) or 0
+	local calls, tab = 0, nil
+	if pick ~= "mentions" and ns.Popups and ns.Popups.Unseen then calls, tab = ns.Popups.Unseen() end
+	return mentions, calls, tab
+end
+
 -- A button by the chat, while the window is closed: the logo in a rounded square, just above the
--- game's social button (whichever this client has), with the unread mentions in a bubble on its
--- top right corner. Only placed against the game's button, never hooking it.
+-- game's social button (whichever this client has), with what waits (UI.Waiting) in a bubble on
+-- its top right corner. Only placed against the game's button, never hooking it.
 local chatButton
 
 -- The bubble: a red disc in a bronze rim, the count in white on it (the game's look: two of the
@@ -1805,12 +1827,21 @@ local function ChatButton()
 	b:SetScript("OnMouseDown", function(self) self.icon:SetPoint("TOPLEFT", 1, -1) self.icon:SetPoint("BOTTOMRIGHT", 1, -1) end)
 	b:SetScript("OnMouseUp", function(self) self.icon:SetAllPoints() end)
 	b:SetScript("OnClick", function(self, button)
-		if button == "RightButton" then UI.WindowMenu(self) else UI.Toggle(true) end
+		if button == "RightButton" then return UI.WindowMenu(self) end
+		-- With the bubble showing, straight to what waits: Mentions first (seeing them clears them,
+		-- UI.Render), else the tab of the newest call or ask (opening the window sees those).
+		local mentions, _, tab = UI.Waiting()
+		if mentions > 0 then UI.SetTab("mentions") elseif tab then UI.SetTab(tab) end
+		UI.Toggle(true)
 	end)
 	b:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:AddLine(ns.NAME)
 		GameTooltip:AddLine(L.CHAT_BUTTON_TIP, 1, 1, 1, true)
+		local mentions, calls = UI.Waiting()
+		if mentions > 0 then GameTooltip:AddLine(L.CHAT_BUTTON_MENTIONS:format(mentions), 1, 0.35, 0.3, true) end
+		if calls > 0 then GameTooltip:AddLine(L.CHAT_BUTTON_CALLS:format(calls), 1, 0.35, 0.3, true) end
+		if mentions + calls > 0 then GameTooltip:AddLine(L.CHAT_BUTTON_OPENS, 0.8, 0.8, 0.8, true) end
 		if ns.Popups.Paused() then GameTooltip:AddLine(L.NOTIFY_TIP:format(UI.NotifyState()), 1, 0.82, 0, true) end
 		GameTooltip:Show()
 	end)
@@ -1827,8 +1858,8 @@ function UI.UpdateChatButton()
 		return
 	end
 	chatButton = chatButton or ChatButton()
-	local n = ns.rdb and ns.rdb.unreadMentions or 0
-	UI.SetBadge(chatButton, n)
+	local mentions, calls = UI.Waiting()
+	UI.SetBadge(chatButton, mentions + calls)
 	-- (Greyed while cards are off or paused: the count still counts.)
 	if chatButton.icon.SetDesaturated then chatButton.icon:SetDesaturated(ns.Popups and ns.Popups.Paused() or false) end
 	if frame:IsShown() then chatButton:Hide() else chatButton:Show() end
@@ -1860,6 +1891,8 @@ ns.On("LOGIN", function()
 	-- The first launch: where the button and the cards go (Popups.Setup), once.
 	if not ns.db.settings.setupDone then ns.After(4, "setup", function() ns.Popups.Setup() end) end
 	ns.On("FEED_CHANGED", UI.UpdateChatButton)
+	ns.On("CALLS_CHANGED", UI.UpdateChatButton) -- (a call ended or an ask answered: off the bubble)
+	C_Timer.NewTicker(15, function() if chatButton and chatButton:IsShown() then UI.UpdateChatButton() end end) -- (calls expire)
 	ns.On("FEED_CHANGED", UI.Dirty)
 	ns.On("CALLS_CHANGED", UI.Dirty)
 	C_Timer.NewTicker(30, function() dirty = true end) -- times ("4m") and distances
