@@ -31,6 +31,18 @@ local function Post(who, ago, text, extra)
 	return p
 end
 
+-- The demo's two mentions are added on top of the real unread count and taken off again when it
+-- ends: by /pug demo off, or by a reload or logout (the demo's posts are never saved; the count
+-- is, so ns.rdb.demoUnread marks that it holds the demo's two). Real mentions that came in
+-- meanwhile stay counted; the Mentions tab opened meanwhile leaves 0.
+Demo.UNREAD = 2
+local function TakeBackUnread()
+	if not (ns.rdb and ns.rdb.demoUnread) then return false end
+	ns.rdb.unreadMentions = math.max(0, (ns.rdb.unreadMentions or 0) - Demo.UNREAD)
+	ns.rdb.demoUnread = nil
+	return true
+end
+
 function Demo.On()
 	Demo.Off(true)
 	for _, d in ipairs(PEOPLE) do
@@ -50,7 +62,8 @@ function Demo.On()
 	Post("Selwyn", 30, "Grats! Save me a water.", { f = "p", par = p1.id })
 	Post("Brannoc", 20, "Same here, on my way.", { f = "p", par = p1.id })
 	ns.Store.Rebuild()
-	ns.rdb.unreadMentions = 2
+	ns.rdb.unreadMentions = (ns.rdb.unreadMentions or 0) + Demo.UNREAD
+	ns.rdb.demoUnread = true
 
 	-- Calls around the player (or in Westfall, without a position).
 	map, x, y = map or 1436, x or 0.54, y or 0.32
@@ -91,8 +104,14 @@ function Demo.Off(quiet)
 	wipe(ns.Store.demo)
 	wipe(Demo.profiles)
 	ns.Calls.ClearDemo()
+	TakeBackUnread()
 	ns.Store.Rebuild()
 	ns.Fire("FEED_CHANGED")
 	ns.Fire("CALLS_CHANGED")
 	if not quiet then ns.Print(ns.L.DEMO_OFF) end
 end
+
+-- A demo left by a reload or logout: its two mentions taken back off the saved count.
+ns.On("LOGIN", function()
+	if TakeBackUnread() then ns.Fire("FEED_CHANGED") end
+end)
